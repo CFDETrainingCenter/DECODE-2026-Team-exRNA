@@ -1,0 +1,268 @@
+---
+title: "exRNA Plasma miRNA — Neurodegenerative Disease Biomarker Analysis"
+author: "Z Shakkour"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# Portable working directory: when knitting, set root to the folder this .Rmd
+# lives in, so anyone who clones the repo can run it without editing paths.
+knitr::opts_knit$set(root.dir = tryCatch(
+  dirname(rstudioapi::getSourceEditorContext()$path),
+  error = function(e) getwd()
+))
+```
+
+# Setup
+
+```{r libraries}
+library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+library(reshape2)
+```
+
+```{r paths}
+# Folders (relative to the project directory, so the repo is portable)
+in_dir  <- "Input_Data"
+out_dir <- "Output_Results"
+dir.create(out_dir, showWarnings = FALSE)
+```
+
+```{r load-data}
+# count matrix: rows = miRNAs, cols = samples
+mat <- as.matrix(read.csv(file.path(in_dir, "miRNA_counts_matrix.csv"),
+                          row.names = 1, check.names = FALSE))
+
+# sample -> condition table
+sample_info <- read.csv(file.path(in_dir, "sample_info.csv"),
+                        stringsAsFactors = FALSE)
+
+cat("Matrix:", nrow(mat), "miRNAs x", ncol(mat), "samples\n")
+print(table(sample_info$condition))
+```
+
+# Analysis function
+
+One function runs the entire pipeline for a given comparison, so every
+analysis is identical and reproducible. It returns the fitted object, the
+shrunken results, and the significant biomarker table, writes that table to
+`Output_Results/`, and stores the QC + volcano plots for later PDF export.
+
+```{r de-function}
+# containers to collect plots across all comparisons
+qc_plots      <- list()
+volcano_plots <- list()
+
+run_comparison <- function(label,            # short name, e.g. "AD"
+                           disease_levels,   # condition(s) forming the "disease" side
+                           full_title) {     # title for the volcano
+
+  # --- build coldata: 2 groups, Healthy as reference ---
+  cd <- data.frame(condition = sample_info$condition,
+                   row.names = sample_info$sample)
+  cd$group <- ifelse(cd$condition == "Healthy Control", "Healthy",
+                     ifelse(cd$condition %in% disease_levels, "Disease", NA))
+  cd <- cd[!is.na(cd$group), , drop = FALSE]
+  cd$group <- relevel(factor(cd$group), ref = "Healthy")
+
+  # --- align matrix, build, filter, run ---
+  cts <- mat[, rownames(cd)]
+  stopifnot(all(rownames(cd) == colnames(cts)))
+
+  dds <- DESeqDataSetFromMatrix(cts, cd, design = ~ group)
+  dds <- dds[rowSums(counts(dds)) >= 10, ]
+  dds <- DESeq(dds)
+
+  # --- QC plots (stored, not printed inline) ---
+  vsd <- varianceStabilizingTransformation(dds, blind = TRUE)
+
+  pca_df <- plotPCA(vsd, intgroup = "group", returnData = TRUE)
+  pv <- round(100 * attr(pca_df, "percentVar"))
+  p_pca <- ggplot(pca_df, aes(PC1, PC2, color = group)) +
+    geom_point(size = 2, alpha = 0.8) +
+    scale_color_manual(values = c("Healthy" = "#4575b4", "Disease" = "#d73027")) +
+    labs(title = paste0("PCA: ", label, " vs Healthy"),
+         x = paste0("PC1: ", pv[1], "% var"),
+         y = paste0("PC2: ", pv[2], "% var"), color = NULL) +
+    theme_bw(base_size = 12)
+
+  nc <- log2(counts(dds, normalized = TRUE) + 1)
+  box_df <- data.frame(sample = rep(colnames(nc), each = nrow(nc)),
+                       value  = as.vector(nc))
+  p_box <- ggplot(box_df, aes(sample, value)) +
+    geom_boxplot(outlier.shape = NA, fill = "grey80", linewidth = 0.2) +
+    labs(title = paste0("Normalized counts: ", label, " vs Healthy"),
+         x = NULL, y = "log2(normalized count + 1)") +
+    theme_bw(base_size = 11) +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+  qc_plots[[paste0(label, "_PCA")]] <<- p_pca
+  qc_plots[[paste0(label, "_box")]] <<- p_box
+
+  # --- shrunken results (ashr: robust, no convergence warnings) ---
+  resLFC <- lfcShrink(dds, coef = "group_Disease_vs_Healthy", type = "ashr")
+  resLFC <- resLFC[order(resLFC$padj), ]
+
+  # --- significant biomarkers ---
+  rdf <- as.data.frame(resLFC); rdf$miRNA <- rownames(rdf)
+  sig <- subset(rdf, padj < 0.05 & abs(log2FoldChange) > 1)
+  sig <- sig[order(sig$padj), ]
+  write.csv(sig, file.path(out_dir, paste0(label, "_biomarkers.csv")),
+            row.names = FALSE)
+
+  # --- volcano (no subtitle) ---
+  v <- rdf[!is.na(rdf$padj), ]
+  v$status <- "Not significant"
+  v$status[v$padj < 0.05 & v$log2FoldChange >  1] <- paste("Up in", label)
+  v$status[v$padj < 0.05 & v$log2FoldChange < -1] <- paste("Down in", label)
+  v$lab <- ifelse(v$padj < 0.05 & abs(v$log2FoldChange) > 1, v$miRNA, NA)
+
+  cols <- setNames(c("#d73027", "#4575b4", "grey75"),
+                   c(paste("Up in", label), paste("Down in", label), "Not significant"))
+
+  p_volc <- ggplot(v, aes(log2FoldChange, -log10(padj), color = status)) +
+    geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "grey60") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "grey60") +
+    geom_point(alpha = 0.75, size = 2) +
+    geom_text_repel(aes(label = lab), size = 3.2, max.overlaps = Inf,
+                    box.padding = 0.4, min.segment.length = 0, show.legend = FALSE) +
+    scale_color_manual(values = cols) +
+    labs(title = full_title,
+         x = expression(log[2]~fold~change),
+         y = expression(-log[10]~adjusted~italic(p)), color = NULL) +
+    theme_bw(base_size = 13) +
+    theme(legend.position = "top", plot.title = element_text(face = "bold"),
+          panel.grid.minor = element_blank())
+
+  volcano_plots[[label]] <<- p_volc
+
+  # report
+  cat("\n===", label, "vs Healthy ===\n")
+  print(table(cd$group))
+  cat("Significant (padj<0.05):", sum(resLFC$padj < 0.05, na.rm = TRUE),
+      "| Biomarkers (padj<0.05 & |log2FC|>1):", nrow(sig), "\n")
+
+  list(dds = dds, res = resLFC, sig = sig, n = table(cd$group))
+}
+```
+
+# Run all comparisons
+
+Pooled "all disease" first, then every individual subtype vs Healthy.
+
+```{r run-all}
+subtypes <- setdiff(unique(sample_info$condition), "Healthy Control")
+
+# short labels for plot titles / table columns
+label_map <- c(
+  "Alzheimer's Disease"                          = "AD",
+  "Parkinson's Disease"                          = "PD",
+  "Mild cognitive disorder"                      = "MCI",
+  "Lewy Body Dementia"                           = "LBD",
+  "Dementia associated with Parkinson's Disease" = "PDD"
+)
+# safety check: every subtype has a label
+stopifnot(length(setdiff(subtypes, names(label_map))) == 0)
+
+results_all <- list()
+
+# pooled comparison
+results_all[["Disease"]] <- run_comparison(
+  label = "Disease", disease_levels = subtypes,
+  full_title = "Plasma miRNAs: Combined Disease vs Healthy")
+
+# each subtype
+for (cond in subtypes) {
+  lab <- label_map[[cond]]
+  results_all[[lab]] <- run_comparison(
+    label = lab, disease_levels = cond,
+    full_title = paste0("Plasma miRNAs: ", cond, " vs Healthy"))
+}
+```
+
+# Sample counts per subtype
+
+```{r sample-table}
+sample_counts <- as.data.frame(table(sample_info$condition))
+colnames(sample_counts) <- c("Condition", "n_samples")
+sample_counts <- sample_counts[order(-sample_counts$n_samples), ]
+print(sample_counts, row.names = FALSE)
+write.csv(sample_counts, file.path(out_dir, "sample_counts_per_subtype.csv"),
+          row.names = FALSE)
+```
+
+# Summary: upregulated miRNAs per comparison
+
+```{r summary-table}
+# upregulated (log2FC > 1) miRNAs per comparison
+up_list <- lapply(results_all, function(r) r$sig$miRNA[r$sig$log2FoldChange > 1])
+
+summary_tab <- data.frame(
+  Comparison         = names(up_list),
+  n_disease          = sapply(results_all, function(r) as.integer(r$n["Disease"])),
+  n_healthy          = sapply(results_all, function(r) as.integer(r$n["Healthy"])),
+  n_upregulated      = sapply(up_list, length),
+  upregulated_miRNAs = sapply(up_list, function(x) paste(x, collapse = ", "))
+)
+print(summary_tab, row.names = FALSE)
+write.csv(summary_tab, file.path(out_dir, "upregulated_summary.csv"),
+          row.names = FALSE)
+```
+
+# Overlap table across all comparisons
+
+```{r overlap-table}
+all_up <- sort(unique(unlist(up_list)))
+
+membership <- data.frame(miRNA = all_up)
+for (cmp in names(up_list)) membership[[cmp]] <- all_up %in% up_list[[cmp]]
+membership$n_comparisons <- rowSums(membership[, names(up_list), drop = FALSE])
+membership <- membership[order(-membership$n_comparisons), ]
+
+print(membership, row.names = FALSE)
+write.csv(membership, file.path(out_dir, "miRNA_overlap_table.csv"),
+          row.names = FALSE)
+```
+
+# Overlap heatmap
+
+```{r overlap-heatmap}
+hm <- melt(membership[, c("miRNA", names(up_list))], id.vars = "miRNA",
+           variable.name = "Comparison", value.name = "Upregulated")
+hm$miRNA <- factor(hm$miRNA, levels = rev(membership$miRNA))  # most-shared on top
+
+p_overlap <- ggplot(hm, aes(Comparison, miRNA, fill = Upregulated)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  scale_fill_manual(values = c("TRUE" = "#d73027", "FALSE" = "grey92")) +
+  labs(title = "Upregulated plasma miRNAs across conditions",
+       x = NULL, y = NULL, fill = "Up-regulated") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid = element_blank())
+
+print(p_overlap)
+ggsave(file.path(out_dir, "overlap_heatmap.png"), p_overlap,
+       width = 8, height = 7, dpi = 300)
+```
+
+# Export QC plots to one PDF
+
+```{r export-qc-pdf}
+pdf(file.path(out_dir, "QC_plots_all.pdf"), width = 8, height = 6)
+for (nm in names(qc_plots)) print(qc_plots[[nm]])
+dev.off()
+cat("Saved QC_plots_all.pdf (", length(qc_plots), "plots )\n")
+```
+
+# Export volcano plots to one PDF
+
+```{r export-volcano-pdf}
+pdf(file.path(out_dir, "Volcano_plots_all.pdf"), width = 8, height = 6)
+for (nm in names(volcano_plots)) print(volcano_plots[[nm]])
+dev.off()
+cat("Saved Volcano_plots_all.pdf (", length(volcano_plots), "plots )\n")
+```
