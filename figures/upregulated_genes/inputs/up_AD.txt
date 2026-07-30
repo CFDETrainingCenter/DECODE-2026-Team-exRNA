@@ -1,5 +1,0 @@
-disease	mirna
-AD	hsa-miR-23a-3p
-AD	 hsa-miR-329-3p
-AD	 hsa-miR-183-5p
-AD	 hsa-miR-3177-3p

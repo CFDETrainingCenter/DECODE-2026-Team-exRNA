@@ -1,2 +1,0 @@
-disease	mirna
-MCI	hsa-miR-23a-3p
