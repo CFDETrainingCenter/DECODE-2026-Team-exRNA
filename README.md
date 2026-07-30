@@ -1,5 +1,5 @@
 # Identification of common extracellular RNA biomarkers across Neurodegenerative and Cognitive disorders
-Team members: Marangelie Criado-Marrero, Munira Haque, Deepti Jain, Marina Rice, Nur Shahir, Zaynab Shakkour
+**Team members**: Marangelie Criado-Marrero, Munira Haque, Deepti Jain, Marina Rice, Nur Shahir, Zaynab Shakkour
 
 ##  Purpose:
 This project serves as a capstone project for the DeCoDe Institute. 
@@ -12,5 +12,5 @@ Can we identify extracellular RNA (exRNA) signatures in plasma across Alzheimer'
 + Assess if the identified exRNAs are associated with key neurological function
 
 ## Dataset 
-
+exRNA count data from plasma was obtained from Version 3.0 of the [exRNA Atlas](https://exrna-atlas.org/). The exRNA is the data repository of the Extracellular RNA Communication Consortium (ERCC). The exRNA Atlas is developed and maintained by the Data Management and Resource Repository.
 ## Pain Points
