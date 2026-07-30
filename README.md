@@ -11,6 +11,6 @@ Can we identify extracellular RNA (exRNA) signatures in plasma across Alzheimer'
 + Identify differentially expressed exRNAs in neurodegeneratize diseases
 + Assess if the identified exRNAs are associated with key neurological function
 
-## Dataset 
+## Data Source
 exRNA count data from plasma was obtained from Version 3.0 of the [exRNA Atlas](https://exrna-atlas.org/). The exRNA is the data repository of the Extracellular RNA Communication Consortium (ERCC). The exRNA Atlas is developed and maintained by the Data Management and Resource Repository.
 ## Pain Points
