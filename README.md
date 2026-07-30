@@ -1,4 +1,4 @@
-# Identification of common extracellular RNA biomarkers across Neurodegenerative and Cognitive disorders
+# Identification of Common Extracellular RNA Biomarkers Across Neurodegenerative and Cognitive Disorders
 **Team members**: Marangelie Criado-Marrero, Munira Haque, Deepti Jain, Marina Rice, Nur Shahir, Zaynab Shakkour
 
 ##  Purpose:
