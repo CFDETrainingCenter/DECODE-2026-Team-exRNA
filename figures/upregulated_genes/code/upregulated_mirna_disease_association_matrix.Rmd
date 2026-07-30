@@ -1,0 +1,124 @@
+---
+title: "miRNA-Disease Association Matrix"
+output: html_document
+    toc: true
+    toc_float: true
+    theme: flatly
+date: "2026-07-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(DT) # For interactive tables
+install.packages("ComplexUpset") # to make an upset plot
+library(ggplot2)
+```
+
+```{r readfiles}
+# 1. Identify all .tabular files in ~/galaxy_inputs/
+file_paths <- list.files(
+  path = "~/galaxy_inputs/upgenes_disease_mirna_matrix", 
+  pattern = "\\.(tabular|txt)$", 
+  full.names = TRUE
+)
+
+# Print found files to confirm
+print(file_paths)
+
+
+# Read and combine all detected files
+combined_data <- file_paths %>%
+  map_dfr(~ read_tsv(.x, col_names = c("disease", "mirna"),skip=1, col_types = cols())) %>%
+  distinct(mirna, disease) %>%
+  mutate(present = 1)
+
+#check
+dim(combined_data)
+print(combined_data, n=42)
+```
+
+```{r make matrix}
+mirna_disease_matrix <- combined_data %>%
+  pivot_wider(
+    names_from = disease,
+    values_from = present,
+    values_fill = 0
+  ) %>% 
+  # Count TRUE values across all disease columns (excluding the 'miRNA' column)
+  # and sort descending so rows with the most TRUEs are at the top
+  mutate(total_diseases = rowSums(across(-mirna))) %>%
+  arrange(desc(total_diseases)) %>%
+  select(-total_diseases) # Clean up the temporary count column
+
+# Save the final matrix to a file
+write_tsv(mirna_disease_matrix, "~/galaxy_inputs/upgenes_disease_mirna_matrix/upgenes_mirna_disease_matrix.tsv")
+```
+
+```{r interactive table, include=FALSE}
+datatable(
+  mirna_disease_matrix,
+  options = list(
+    pageLength = 10,
+    scrollX = TRUE,
+    dom = 'Bfrtip'
+  ),
+  filter = 'top',
+  rownames = FALSE,
+  caption = 'Table 1: miRNA and Disease presence (1) / absence (0) matrix.'
+)
+```
+
+```{r upset-plot, fig.width=10, fig.height=6}
+library(ComplexUpset)
+
+# Get all disease column names (excluding the 'miRNA' column)
+disease_cols <- setdiff(colnames(mirna_disease_matrix), "miRNA")
+
+# 1. Create and store the plot in a variable
+p <- upset(
+  data = mirna_disease_matrix,
+  intersect = disease_cols,
+  name = "Disease interactions for upregulated genes",
+  min_size = 1,
+  width_ratio = 0.2,
+  base_annotations = list(
+    'Intersection size' = intersection_size(
+      counts = TRUE,
+      text = list(size = 4.5),
+      mapping = aes(fill = 'count')
+    )
+  ),
+themes = upset_modify_themes(
+    list(
+      'intersections_matrix' = theme(
+        text = element_text(size = 14),
+        axis.text.y = element_text(size = 14, face = "bold"), # Disease names on y-axis
+        axis.title.x = element_text(size = 14, face = "bold") # "Disease interactions..." title
+      ),
+      'overall_sizes' = theme(
+        axis.text.x = element_text(size = 12),
+        axis.title.x = element_text(size = 12) # "Set size" title
+      ),
+      'Intersection size' = theme(
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(size = 14, face = "bold") # "Intersection size" label
+      )
+    )
+  )
+)
+
+# 2. Display the plot (needed for R Markdown preview)
+print(p)
+
+# 3. Save as PDF
+ggsave(
+  filename = "~/galaxy_inputs/upgenes_disease_mirna_matrix/upset_plot_upregulated.pdf", 
+  plot = p, 
+  width = 10,      # Width in inches
+  height = 6,      # Height in inches
+  device = "pdf"
+)
+
+```
+
